@@ -59,6 +59,11 @@ async function run() {
       res.send(result);
     });
 
+    app.get('/latest-issues', async(req, res) => {
+      const result = await issuesCollection.find().sort({date: -1}).limit(6).toArray();
+      res.send(result);
+    });
+
     app.post('/issues', verifyFireBaseToken, async (req,res) => {
       const newIssue = req.body;
       const result = await issuesCollection.insertOne(newIssue);
