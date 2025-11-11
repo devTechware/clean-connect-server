@@ -3,7 +3,7 @@ const cors = require('cors');
 require('dotenv').config();
 const admin = require('firebase-admin');
 const serviceAccount = require('./clean-connect--firebase-admin-key.json');
-const { MongoClient, ServerApiVersion } = require('mongodb');
+const { MongoClient, ServerApiVersion, ObjectId } = require('mongodb');
 const app = express();
 const port = process.env.PORT || 3000;
 
@@ -56,6 +56,13 @@ async function run() {
 
     app.get('/issues', async (req, res) => {
       const result = await issuesCollection.find().toArray();
+      res.send(result);
+    });
+
+    app.get('/issues/:id', verifyFireBaseToken, async(req,res) => {
+      const id = req.params.id;      
+      const query = {_id: new ObjectId(id)};
+      const result = await issuesCollection.findOne(query);
       res.send(result);
     });
 
