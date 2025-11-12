@@ -53,6 +53,7 @@ async function run() {
 
     const db = client.db('clean_connect_db');
     const issuesCollection = db.collection('issues');
+    const contributorsCollection = db.collection('contributors');
 
     app.get('/issues', async (req, res) => {
       const result = await issuesCollection.find().toArray();
@@ -74,10 +75,58 @@ async function run() {
     app.post('/issues', verifyFireBaseToken, async (req,res) => {
       const newIssue = req.body;
       const result = await issuesCollection.insertOne(newIssue);
-      res.send({
-        success: true,
-        result
-      });
+      res.send(result);
+    });
+
+    app.patch('/issues/:id', verifyFireBaseToken, async(req, res) => {
+      const id = req.params.id;      
+      const updatedIssue = req.body;      
+      const query = { _id: new ObjectId(id) };
+      const update = {
+          $set: {
+              title: updatedIssue.title,
+              category: updatedIssue.category,
+              amount: updatedIssue.amount,
+              description: updatedIssue.description,
+              status: updatedIssue.status,
+          }
+      }
+      const result = await issuesCollection.updateOne(query, update);
+      res.send(result);           
+    });
+
+    app.delete('/issues/:id', verifyFireBaseToken, async(req, res) => {
+        const id = req.params.id;
+        const query = { _id: new ObjectId(id) }
+        const result = await issuesCollection.deleteOne(query);
+        res.send(result);
+    });
+
+
+    app.get('/my-issues', verifyFireBaseToken ,async (req, res) => {
+      const email = req.query.email;      
+      const query = {};
+      if (email) {
+          query.email = email;
+          if(email !== req.token_email){
+              return res.status(403).send({message: 'forbidden access'})
+          }
+      }
+      const result = await issuesCollection.find(query).toArray();     
+      res.send(result);
+    });
+
+    app.get('/contributors/:id', verifyFireBaseToken, async (req,res) => {
+      const issueId = req.params.id;      
+      const query = {issueId: issueId};
+      const result = await contributorsCollection.find(query).toArray();
+      res.send(result);
+    });
+
+    app.post('/contributors', verifyFireBaseToken, async (req,res) => {
+      const contributor = req.body;
+      const result = await contributorsCollection.insertOne(contributor);
+      res.send(result);
     });
 
     // Send a ping to confirm a successful connection
