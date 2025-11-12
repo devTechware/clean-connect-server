@@ -55,8 +55,14 @@ async function run() {
     const issuesCollection = db.collection('issues');
     const contributorsCollection = db.collection('contributors');
 
-    app.get('/issues', async (req, res) => {
-      const result = await issuesCollection.find().toArray();
+    app.get("/issues", async (req, res) => {
+      const { category, status } = req.query;
+      const filter = {};
+
+      if (category) filter.category = category;
+      if (status) filter.status = status;
+
+      const result = await issuesCollection.find(filter).toArray();
       res.send(result);
     });
 
@@ -126,6 +132,19 @@ async function run() {
     app.post('/contributors', verifyFireBaseToken, async (req,res) => {
       const contributor = req.body;
       const result = await contributorsCollection.insertOne(contributor);
+      res.send(result);
+    });
+
+    app.get('/my-contributions', verifyFireBaseToken ,async (req, res) => {
+      const email = req.query.email;      
+      const query = {};
+      if (email) {
+          query.email = email;
+          if(email !== req.token_email){
+              return res.status(403).send({message: 'forbidden access'})
+          }
+      }
+      const result = await contributorsCollection.find(query).toArray();     
       res.send(result);
     });
 
