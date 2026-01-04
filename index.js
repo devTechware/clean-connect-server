@@ -25,7 +25,6 @@ const verifyFireBaseToken = async (req, res, next) => {
     
     try {
         const decoded = await admin.auth().verifyIdToken(token);
-        //console.log('inside token', decoded)
         req.token_email = decoded.email;
         next();
     }
@@ -50,21 +49,35 @@ app.get('/', (req,res) => {
 
 async function run() {
   try {
-    // Connect the client to the server	(optional starting in v4.7)
-    //await client.connect();
-
     const db = client.db('clean_connect_db');
     const issuesCollection = db.collection('issues');
     const contributorsCollection = db.collection('contributors');
 
+    // 🔥 UPDATED: Enhanced filtering with priority and sorting
     app.get("/issues", async (req, res) => {
-      const { category, status } = req.query;
+      const { category, status, priority, sort } = req.query;
       const filter = {};
 
       if (category) filter.category = category;
       if (status) filter.status = status;
+      if (priority) filter.priority = priority;
 
-      const result = await issuesCollection.find(filter).toArray();
+      // Sorting options
+      let sortOption = {};
+      if (sort === 'newest') {
+        sortOption = { createdAt: -1 };
+      } else if (sort === 'oldest') {
+        sortOption = { createdAt: 1 };
+      } else if (sort === 'priority') {
+        // Custom sort: high -> medium -> low
+        sortOption = { priority: 1 };
+      } else if (sort === 'title') {
+        sortOption = { title: 1 };
+      } else {
+        sortOption = { createdAt: -1 }; // Default: newest first
+      }
+
+      const result = await issuesCollection.find(filter).sort(sortOption).toArray();
       res.send(result);
     });
 
@@ -76,29 +89,47 @@ async function run() {
     });
 
     app.get('/latest-issues', async(req, res) => {
-      const result = await issuesCollection.find().sort({date: -1}).limit(6).toArray();
+      const result = await issuesCollection.find().sort({createdAt: -1}).limit(6).toArray();
       res.send(result);
     });
 
+    // 🔥 UPDATED: Post with automatic timestamp and default values
     app.post('/issues', verifyFireBaseToken, async (req,res) => {
-      const newIssue = req.body;
+      const newIssue = {
+        ...req.body,
+        createdAt: new Date().toISOString(), // Add timestamp
+        updatedAt: new Date().toISOString(),
+        status: req.body.status || 'pending', // Default status
+        priority: req.body.priority || 'medium', // Default priority
+        contributions: req.body.contributions || 0, // Default contributions
+        totalContributions: req.body.totalContributions || 0, // Track total money
+        userEmail: req.token_email, // Store who created it
+      };
       const result = await issuesCollection.insertOne(newIssue);
       res.send(result);
     });
 
+    // 🔥 UPDATED: Patch with more fields and updated timestamp
     app.patch('/issues/:id', verifyFireBaseToken, async(req, res) => {
       const id = req.params.id;      
       const updatedIssue = req.body;      
       const query = { _id: new ObjectId(id) };
-      const update = {
-          $set: {
-              title: updatedIssue.title,
-              category: updatedIssue.category,
-              amount: updatedIssue.amount,
-              description: updatedIssue.description,
-              status: updatedIssue.status,
-          }
-      }
+      
+      const updateFields = {
+        updatedAt: new Date().toISOString(),
+      };
+
+      // Only update fields that are provided
+      if (updatedIssue.title) updateFields.title = updatedIssue.title;
+      if (updatedIssue.category) updateFields.category = updatedIssue.category;
+      if (updatedIssue.amount) updateFields.amount = updatedIssue.amount;
+      if (updatedIssue.description) updateFields.description = updatedIssue.description;
+      if (updatedIssue.status) updateFields.status = updatedIssue.status;
+      if (updatedIssue.priority) updateFields.priority = updatedIssue.priority;
+      if (updatedIssue.location) updateFields.location = updatedIssue.location;
+      if (updatedIssue.image) updateFields.image = updatedIssue.image;
+
+      const update = { $set: updateFields };
       const result = await issuesCollection.updateOne(query, update);
       res.send(result);           
     });
@@ -110,7 +141,6 @@ async function run() {
         res.send(result);
     });
 
-
     app.get('/my-issues', verifyFireBaseToken ,async (req, res) => {
       const email = req.query.email;      
       const query = {};
@@ -120,7 +150,20 @@ async function run() {
               return res.status(403).send({message: 'forbidden access'})
           }
       }
-      const result = await issuesCollection.find(query).toArray();     
+      const result = await issuesCollection.find(query).sort({createdAt: -1}).toArray();     
+      res.send(result);
+    });
+
+    // 🔥 NEW: Get issues by user email for dashboard
+    app.get('/issues/user/:email', verifyFireBaseToken, async (req, res) => {
+      const email = req.params.email;
+      
+      if (email !== req.token_email) {
+        return res.status(403).send({ message: 'forbidden access' });
+      }
+
+      const query = { userEmail: email };
+      const result = await issuesCollection.find(query).sort({createdAt: -1}).toArray();
       res.send(result);
     });
 
@@ -131,9 +174,31 @@ async function run() {
       res.send(result);
     });
 
+    // 🔥 UPDATED: Add contribution and update issue total
     app.post('/contributors', verifyFireBaseToken, async (req,res) => {
-      const contributor = req.body;
+      const contributor = {
+        ...req.body,
+        createdAt: new Date().toISOString(),
+        email: req.token_email,
+      };
+      
+      // Insert contributor
       const result = await contributorsCollection.insertOne(contributor);
+
+      // Update issue's total contributions
+      if (contributor.issueId && contributor.amount) {
+        const issueQuery = { _id: new ObjectId(contributor.issueId) };
+        await issuesCollection.updateOne(
+          issueQuery,
+          { 
+            $inc: { 
+              totalContributions: parseFloat(contributor.amount),
+              contributions: 1 // Increment contribution count
+            }
+          }
+        );
+      }
+
       res.send(result);
     });
 
@@ -146,16 +211,39 @@ async function run() {
               return res.status(403).send({message: 'forbidden access'})
           }
       }
-      const result = await contributorsCollection.find(query).toArray();     
+      const result = await contributorsCollection.find(query).sort({createdAt: -1}).toArray();     
       res.send(result);
     });
 
-    // Send a ping to confirm a successful connection
-    //await client.db('admin').command({ ping: 1 });
+    // 🔥 NEW: Get statistics endpoint (optional)
+    app.get('/stats', async (req, res) => {
+      const totalIssues = await issuesCollection.countDocuments();
+      const resolvedIssues = await issuesCollection.countDocuments({ status: 'resolved' });
+      const pendingIssues = await issuesCollection.countDocuments({ status: 'pending' });
+      
+      // Get total contributions amount
+      const contributions = await contributorsCollection.aggregate([
+        {
+          $group: {
+            _id: null,
+            total: { $sum: { $toDouble: "$amount" } }
+          }
+        }
+      ]).toArray();
+
+      const totalContributions = contributions.length > 0 ? contributions[0].total : 0;
+
+      res.send({
+        totalIssues,
+        resolvedIssues,
+        pendingIssues,
+        totalContributions
+      });
+    });
+
     console.log('Pinged your deployment. You successfully connected to MongoDB!');
   } finally {
     // Ensures that the client will close when you finish/error
-    //await client.close();
   }
 }
 run().catch(console.dir);
